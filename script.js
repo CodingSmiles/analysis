@@ -123,35 +123,74 @@ function analyze(records) {
         }
     });
 
-    const mostUsedPlan = Object.keys(planTypes).length > 0
-        ? Object.keys(planTypes).reduce((a, b) => planTypes[a] > planTypes[b] ? a : b)
-        : 'None';
     const avgPpt = pptCount > 0 ? (pptSum / pptCount).toFixed(2) : '0';
     const avgPremium = premiumCount > 0 ? (premiumSum / premiumCount).toFixed(2) : '0';
-    const mostCommonCategory = Object.keys(categories).length > 0
-        ? Object.keys(categories).reduce((a, b) => categories[a] > categories[b] ? a : b)
-        : 'None';
-    const totalEntries = records.length;
     const totalPolicies = premiumCount;
 
-    const resultsDiv = document.getElementById('results');
-    resultsDiv.innerHTML = '';
-    function addQuestion(question, answer) {
-        const qElem = document.createElement('p');
-        qElem.className = 'question';
-        qElem.textContent = question;
-        const aElem = document.createElement('p');
-        aElem.className = 'answer';
-        aElem.textContent = answer;
-        resultsDiv.appendChild(qElem);
-        resultsDiv.appendChild(aElem);
+    // Display numerical results
+    const numericalResultsDiv = document.getElementById('numerical-results');
+    numericalResultsDiv.innerHTML = '';
+    function addResult(label, value) {
+        const p = document.createElement('p');
+        p.innerHTML = `<span class="label">${label}</span>: ${value}`;
+        numericalResultsDiv.appendChild(p);
     }
+    addResult(`Unique Users on ${latestDateStr}`, uniqueUsersToday);
+    addResult('Average PPT (Years)', avgPpt);
+    addResult('Average Premium (Amount)', avgPremium);
+    addResult('Total Policies', totalPolicies);
 
-    addQuestion(`How many people used the calculator on ${latestDateStr}?`, uniqueUsersToday);
-    addQuestion('What is the most used type of plan?', mostUsedPlan);
-    addQuestion('What is the average PPT in years?', avgPpt);
-    addQuestion('What is the average premium?', avgPremium);
-    addQuestion('What is the most common category?', mostCommonCategory);
-    addQuestion('Total number of calculations performed:', totalEntries);
-    addQuestion('Total number of policies calculated:', totalPolicies);
+    // Chart configurations
+    const chartConfigs = [
+        {
+            id: 'planTypesChart',
+            config: {
+                type: 'pie',
+                data: {
+                    labels: Object.keys(planTypes),
+                    datasets: [{
+                        data: Object.values(planTypes),
+                        backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF'],
+                        borderColor: ['#D32F2F', '#1976D2', '#FBC02D', '#388E3C', '#7B1FA2'],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    plugins: {
+                        legend: { position: 'right' },
+                        title: { display: true, text: 'Distribution of Plan Types' }
+                    }
+                }
+            }
+        },
+        {
+            id: 'categoriesChart',
+            config: {
+                type: 'pie',
+                data: {
+                    labels: Object.keys(categories),
+                    datasets: [{
+                        data: Object.values(categories),
+                        backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF'],
+                        borderColor: ['#D32F2F', '#1976D2', '#FBC02D', '#388E3C', '#7B1FA2'],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    plugins: {
+                        legend: { position: 'right' },
+                        title: { display: true, text: 'Distribution of Categories' }
+                    }
+                }
+            }
+        }
+    ];
+
+    // Render charts
+    chartConfigs.forEach(({ id, config }) => {
+        const canvas = document.getElementById(id);
+        if (canvas) {
+            new Chart(canvas.getContext('2d'), config);
+        }
+    });
 }
