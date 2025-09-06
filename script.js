@@ -1,126 +1,157 @@
-document.getElementById("csvFileInput").addEventListener("change", handleFileUpload);
+document.getElementById('csvFile').addEventListener('change', handleFile);
 
-function handleFileUpload(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    const text = e.target.result;
-    const records = parseCSV(text);
-    displayAnalysis(records);
-  };
-  reader.readAsText(file);
+function handleFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        const csv = event.target.result;
+        const rows = parseCSV(csv);
+        if (rows.length < 1) {
+            alert('Invalid or empty CSV');
+            return;
+        }
+        const headers = rows[0];
+        const data = rows.slice(1).map(r => {
+            let obj = {};
+            headers.forEach((h, i) => obj[h] = r[i]);
+            return obj;
+        });
+        data.forEach(d => {
+            try {
+                d.content = JSON.parse(d.content);
+            } catch (err) {
+                console.error('Invalid JSON in content:', err);
+                d.content = {};
+            }
+        });
+        analyze(data);
+    };
+    reader.readAsText(file);
 }
 
 function parseCSV(text) {
-  const lines = text.split(/\r?\n/).filter(line => line.trim() !== "");
-  const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.trim());
-
-  return lines.slice(1).map(line => {
-    const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-    const obj = {};
-    headers.forEach((h, i) => {
-      let val = values[i] || "";
-      val = val.replace(/^"|"$/g, ""); // remove outer quotes
-      val = val.replace(/""/g, '"');   // unescape inner quotes
-      obj[h] = val;
-    });
-    return obj;
-  });
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (inQuotes) {
+            if (char === '"') {
+                if (text[i + 1] === '"') {
+                    field += '"';
+                    i++;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                field += char;
+            }
+        } else {
+            if (char === '"') {
+                inQuotes = true;
+            } else if (char === ',') {
+                row.push(field);
+                field = '';
+            } else if (char === '\n' || char === '\r') {
+                if (field || row.length) {
+                    row.push(field);
+                    rows.push(row);
+                    row = [];
+                    field = '';
+                }
+                if (char === '\r' && text[i + 1] === '\n') i++;
+            } else {
+                field += char;
+            }
+        }
+    }
+    if (field || row.length) {
+        row.push(field);
+        rows.push(row);
+    }
+    return rows;
 }
 
-function displayAnalysis(records) {
-  const analysisDiv = document.getElementById("analysis");
-  analysisDiv.innerHTML = "";
+function parseCustomDate(dateStr) {
+    if (!dateStr) return new Date(0);
+    const monthMap = {
+        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+    };
+    const parts = dateStr.match(/(\w+)\s(\d+),\s(\d+),\s(\d+):(\d+)\s(\w+)/);
+    if (!parts) return new Date(0);
+    const [, monthStr, day, year, hour, minute, period] = parts;
+    const month = monthMap[monthStr];
+    if (month === undefined) return new Date(0);
+    let hour24 = parseInt(hour, 10);
+    if (period.toUpperCase() === 'PM' && hour24 !== 12) hour24 += 12;
+    if (period.toUpperCase() === 'AM' && hour24 === 12) hour24 = 0;
+    const date = new Date(parseInt(year), month, parseInt(day), hour24, parseInt(minute), 0);
+    return isNaN(date) ? new Date(0) : date;
+}
 
-  if (!records.length) {
-    analysisDiv.innerHTML = "<p>No records found in CSV.</p>";
-    return;
-  }
+function analyze(records) {
+    records.forEach(r => r.parsedDate = parseCustomDate(r.time));
+    const maxTime = Math.max(...records.map(r => r.parsedDate.getTime()));
+    const latestDate = new Date(maxTime);
+    const latestDateStr = latestDate.toDateString();
+    const todayRecords = records.filter(r => r.parsedDate.toDateString() === latestDateStr);
+    const uniqueUsersToday = new Set(todayRecords.map(r => r.empId)).size;
 
-  const questions = [
-    {
-      q: "How many people used the calculator today?",
-      a: () => {
-        const todayStr = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-        return records.filter(r => r.time.startsWith(todayStr)).length;
-      }
-    },
-    {
-      q: "Most used plan type?",
-      a: () => {
-        const planCount = {};
-        records.forEach(r => {
-          try {
-            const content = JSON.parse(r.content);
-            content.policies.forEach(p => {
-              planCount[p.planType] = (planCount[p.planType] || 0) + 1;
+    let planTypes = {};
+    let pptSum = 0;
+    let pptCount = 0;
+    let premiumSum = 0;
+    let premiumCount = 0;
+    let categories = {};
+    records.forEach(r => {
+        const cat = r.content.categoryValue || 'Unknown';
+        categories[cat] = (categories[cat] || 0) + 1;
+        if (Array.isArray(r.content.policies)) {
+            r.content.policies.forEach(p => {
+                const type = p.planType || 'Unknown';
+                planTypes[type] = (planTypes[type] || 0) + 1;
+                const ppt = parseInt(p.pptYears, 10) || 0;
+                pptSum += ppt;
+                pptCount++;
+                const premium = parseFloat((p.premium || '0').replace(/,/g, '')) || 0;
+                premiumSum += premium;
+                premiumCount++;
             });
-          } catch(e) {}
-        });
-        const mostUsed = Object.entries(planCount).sort((a,b) => b[1]-a[1])[0];
-        return mostUsed ? `${mostUsed[0]} (${mostUsed[1]} times)` : "N/A";
-      }
-    },
-    {
-      q: "Average PPT (years)?",
-      a: () => {
-        let total = 0, count = 0;
-        records.forEach(r => {
-          try {
-            const content = JSON.parse(r.content);
-            content.policies.forEach(p => {
-              const ppt = parseFloat(p.pptYears);
-              if (!isNaN(ppt)) { total += ppt; count++; }
-            });
-          } catch(e) {}
-        });
-        return count ? (total / count).toFixed(2) : "N/A";
-      }
-    },
-    {
-      q: "Total WPC amount (numeric only)?",
-      a: () => {
-        let total = 0;
-        records.forEach(r => {
-          try {
-            const content = JSON.parse(r.content);
-            content.policies.forEach(p => {
-              const wpc = parseInt(p.wpc.replace(/,/g, "").replace(/[^\d]/g,""), 10);
-              if (!isNaN(wpc)) total += wpc;
-            });
-          } catch(e) {}
-        });
-        return total.toLocaleString();
-      }
-    },
-    {
-      q: "Number of entries per category?",
-      a: () => {
-        const categoryCount = {};
-        records.forEach(r => {
-          try {
-            const content = JSON.parse(r.content);
-            const cat = content.categoryText || "Unknown";
-            categoryCount[cat] = (categoryCount[cat] || 0) + 1;
-          } catch(e) {}
-        });
-        return Object.entries(categoryCount).map(([k,v]) => `${k}: ${v}`).join(", ");
-      }
+        }
+    });
+
+    const mostUsedPlan = Object.keys(planTypes).length > 0
+        ? Object.keys(planTypes).reduce((a, b) => planTypes[a] > planTypes[b] ? a : b)
+        : 'None';
+    const avgPpt = pptCount > 0 ? (pptSum / pptCount).toFixed(2) : '0';
+    const avgPremium = premiumCount > 0 ? (premiumSum / premiumCount).toFixed(2) : '0';
+    const mostCommonCategory = Object.keys(categories).length > 0
+        ? Object.keys(categories).reduce((a, b) => categories[a] > categories[b] ? a : b)
+        : 'None';
+    const totalEntries = records.length;
+    const totalPolicies = premiumCount;
+
+    const resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = '';
+    function addQuestion(question, answer) {
+        const qElem = document.createElement('p');
+        qElem.className = 'question';
+        qElem.textContent = question;
+        const aElem = document.createElement('p');
+        aElem.className = 'answer';
+        aElem.textContent = answer;
+        resultsDiv.appendChild(qElem);
+        resultsDiv.appendChild(aElem);
     }
-  ];
 
-  questions.forEach(item => {
-    const qEl = document.createElement("div");
-    qEl.className = "analysis-question";
-    qEl.textContent = item.q;
-
-    const aEl = document.createElement("div");
-    aEl.className = "analysis-answer";
-    aEl.textContent = item.a();
-
-    analysisDiv.appendChild(qEl);
-    analysisDiv.appendChild(aEl);
-  });
+    addQuestion(`How many people used the calculator on ${latestDateStr}?`, uniqueUsersToday);
+    addQuestion('What is the most used type of plan?', mostUsedPlan);
+    addQuestion('What is the average PPT in years?', avgPpt);
+    addQuestion('What is the average premium?', avgPremium);
+    addQuestion('What is the most common category?', mostCommonCategory);
+    addQuestion('Total number of calculations performed:', totalEntries);
+    addQuestion('Total number of policies calculated:', totalPolicies);
 }
